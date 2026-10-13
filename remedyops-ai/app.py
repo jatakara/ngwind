@@ -162,3 +162,45 @@ def rollback(req:RollbackIn):
 def audit():
     with Session(engine) as db:
         return [{"action":e.action,"detail":json.loads(e.detail)} for e in db.scalars(select(Event).order_by(Event.id.desc()).limit(100))]
+
+# v0.3: authenticated read-only SSH diagnostic endpoint.
+# Requires an explicitly configured token; never accepts SSH secrets in API payload.
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from ssh_diagnostics import Diagnostic, diagnose
+import hmac
+
+@app.middleware("http")
+async def api_guard(request: Request, call_next):
+    token=os.environ.get("REMEDYOPS_API_TOKEN","")
+    # Without a token the service is restricted to localhost clients only.
+    # For remote access set REMEDYOPS_API_TOKEN and use TLS reverse proxy.
+    peer=request.client.host if request.client else ""
+    if not token and peer not in ("127.0.0.1","::1","testclient"):
+        return JSONResponse({"detail":"Token not configured: localhost only"},status_code=403)
+    if token and not hmac.compare_digest(request.headers.get("X-API-Token",""),token):
+        return JSONResponse({"detail":"Unauthorized"},status_code=401)
+    return await call_next(request)
+
+class DiagnosticIn(BaseModel):
+    asset_id: int = Field(ge=1)
+
+@app.post("/api/diagnose")
+def diagnose_asset(req:DiagnosticIn):
+    if os.environ.get("REMEDYOPS_ENABLE_SSH_DIAGNOSTICS")!="true":
+        raise HTTPException(403,"SSH diagnostics are disabled")
+    with Session(engine) as db:
+        asset=db.get(Asset,req.asset_id)
+        if not asset:raise HTTPException(404,"Asset not found")
+        # The private key and host-key pin are provisioned on the controller.
+        # They are not transmitted by the browser or stored in the DB.
+        key_path=os.environ.get("REMEDYOPS_SSH_KEY_PATH","")
+        known_hosts=os.environ.get("REMEDYOPS_KNOWN_HOSTS_PATH","")
+        d=Diagnostic(asset.host,asset.port,asset.username,key_path,known_hosts)
+    try:
+        result=diagnose(d)
+    except Exception as exc:
+        event("diagnostic.failed",{"asset_id":req.asset_id,"type":type(exc).__name__})
+        raise HTTPException(502,"SSH diagnostic failed; check controller logs") from exc
+    event("diagnostic.completed",{"asset_id":req.asset_id,"checks":list(result)})
+    return {"asset_id":req.asset_id,"mode":"read_only","checks":result}
