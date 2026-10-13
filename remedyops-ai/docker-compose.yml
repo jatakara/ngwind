@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: remedyops
+      POSTGRES_USER: remedyops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U remedyops"]
+      interval: 5s
+      retries: 10
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://remedyops:${POSTGRES_PASSWORD}@db:5432/remedyops
+      REMEDYOPS_API_TOKEN: ${REMEDYOPS_API_TOKEN:?Set REMEDYOPS_API_TOKEN}
+      REMEDYOPS_ENABLE_SSH_DIAGNOSTICS: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - app_state:/app/.state
+      - demo_target:/app/demo_target
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres_data:
+  app_state:
+  demo_target:
