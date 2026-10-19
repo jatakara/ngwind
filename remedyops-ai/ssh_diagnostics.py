@@ -48,25 +48,34 @@ def check_host(host, port):
     return addresses
 
 def diagnose(d:Diagnostic):
-    check_host(d.host)
+    # Resolve once; connect to the validated sockaddr without another DNS lookup.
+    addresses = check_host(d.host, d.port)
     if not Path(d.known_hosts_path).is_file():
         raise ValueError("Known-hosts file missing; pin the server host key first")
     if not Path(d.key_path).is_file():
         raise ValueError("SSH key file missing")
-    client=paramiko.SSHClient()
+    client = paramiko.SSHClient()
     client.load_host_keys(d.known_hosts_path)
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    sock = None
     try:
-        client.connect(hostname=d.host,port=d.port,username=d.username,
-                       key_filename=d.key_path,look_for_keys=False,
-                       allow_agent=False,timeout=5,auth_timeout=5,banner_timeout=5)
-        output={}
-        for name,cmd in COMMANDS.items():
-            stdin,stdout,stderr=client.exec_command(cmd,timeout=10)
-            data=stdout.read(65536).decode("utf-8","replace")
-            err=stderr.read(2048).decode("utf-8","replace")
-            output[name]={"exit_code":stdout.channel.recv_exit_status(),
-                          "stdout":data,"stderr":err}
+        family, socktype, proto, _name, sockaddr = addresses[0]
+        sock = socket.socket(family, socktype, proto)
+        sock.settimeout(5)
+        sock.connect(sockaddr)
+        # Original hostname is retained for Paramiko's known_hosts verification.
+        client.connect(hostname=d.host, port=d.port, username=d.username,
+                       sock=sock, key_filename=d.key_path, look_for_keys=False,
+                       allow_agent=False, timeout=5, auth_timeout=5, banner_timeout=5)
+        output = {}
+        for name, cmd in COMMANDS.items():
+            stdin, stdout, stderr = client.exec_command(cmd, timeout=10)
+            data = stdout.read(65536).decode("utf-8", "replace")
+            err = stderr.read(2048).decode("utf-8", "replace")
+            output[name] = {"exit_code": stdout.channel.recv_exit_status(),
+                            "stdout": data, "stderr": err}
         return output
     finally:
         client.close()
+        if sock is not None:
+            sock.close()
