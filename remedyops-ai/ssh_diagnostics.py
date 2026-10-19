@@ -23,19 +23,29 @@ class Diagnostic:
     key_path: str
     known_hosts_path: str
 
-def check_host(host):
-    """Prevent accidental connections to unapproved hosts; explicit CIDR allowlist required."""
-    networks=os.environ.get("REMEDYOPS_ALLOWED_CIDRS","")
+def check_host(host, port):
+    """Return validated socket addresses; reject any DNS answer outside the allowlist."""
+    networks = os.environ.get("REMEDYOPS_ALLOWED_CIDRS", "")
     if not networks.strip():
         raise ValueError("REMEDYOPS_ALLOWED_CIDRS must be configured")
     try:
-        addresses=socket.getaddrinfo(host,None,type=socket.SOCK_STREAM)
-        ips={ipaddress.ip_address(item[4][0]) for item in addresses}
-        cidrs=[ipaddress.ip_network(x.strip(),strict=False) for x in networks.split(",") if x.strip()]
-        if not ips or any(not any(ip in net for net in cidrs) for ip in ips):
-            raise ValueError("Host outside approved CIDRs")
+        cidrs = [ipaddress.ip_network(x.strip(), strict=False)
+                 for x in networks.split(",") if x.strip()]
+    except ValueError as exc:
+        raise ValueError("Invalid approved CIDR configuration") from exc
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ValueError("Host DNS resolution failed") from exc
+    if not addresses:
+        raise ValueError("Host DNS resolution returned no addresses")
+    for family, _kind, _proto, _name, sockaddr in addresses:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            raise ValueError("Unsupported address family")
+        ip = ipaddress.ip_address(sockaddr[0])
+        if not any(ip in net for net in cidrs):
+            raise ValueError("Host outside approved CIDRs")
+    return addresses
 
 def diagnose(d:Diagnostic):
     check_host(d.host)
