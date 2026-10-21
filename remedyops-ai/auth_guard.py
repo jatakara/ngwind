@@ -1,18 +1,18 @@
-"""Fail-closed authentication decision for RemedyOps API requests.
+"""Fail-closed authentication for the RemedyOps API.
 
-Keep the decision independent of FastAPI so denial cases can be unit-tested
-without starting a server or touching the remediation sandbox.
+All /api endpoints require a configured token, independent of the client's
+network address or reverse-proxy headers. The static UI is not an API endpoint.
 """
 
 import hmac
+import os
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 
 def api_auth_failure(path: str, expected_token: str, supplied_token: str) -> tuple[int, str] | None:
-    """Return (HTTP status, detail) when access must be denied, else None.
-
-    Non-API paths may serve the static UI; all /api endpoints require a token.
-    Never infer trust from the request's source address or proxy headers.
-    """
+    """Return an HTTP denial decision or None when the request is permitted."""
     if path != "/api" and not path.startswith("/api/"):
         return None
     if not expected_token:
@@ -20,3 +20,22 @@ def api_auth_failure(path: str, expected_token: str, supplied_token: str) -> tup
     if not hmac.compare_digest(supplied_token, expected_token):
         return (401, "Unauthorized")
     return None
+
+
+def install_auth_guard(app: FastAPI) -> None:
+    """Install one middleware enforcing token authentication for every API route."""
+    @app.middleware("http")
+    async def api_guard(request: Request, call_next):
+        denial = api_auth_failure(
+            request.url.path,
+            os.environ.get("REMEDYOPS_API_TOKEN", ""),
+            request.headers.get("X-API-Token", ""),
+        )
+        if denial is not None:
+            status, detail = denial
+            return JSONResponse(
+                {"detail": detail},
+                status_code=status,
+                headers={"Cache-Control": "no-store"},
+            )
+        return await call_next(request)
