@@ -165,22 +165,12 @@ def audit():
 
 # v0.3: authenticated read-only SSH diagnostic endpoint.
 # Requires an explicitly configured token; never accepts SSH secrets in API payload.
-from fastapi import Request
-from fastapi.responses import JSONResponse
 from ssh_diagnostics import Diagnostic, diagnose
-import hmac
+from auth_guard import install_auth_guard
 
-@app.middleware("http")
-async def api_guard(request: Request, call_next):
-    token=os.environ.get("REMEDYOPS_API_TOKEN","")
-    # Without a token the service is restricted to localhost clients only.
-    # For remote access set REMEDYOPS_API_TOKEN and use TLS reverse proxy.
-    peer=request.client.host if request.client else ""
-    if not token and peer not in ("127.0.0.1","::1","testclient"):
-        return JSONResponse({"detail":"Token not configured: localhost only"},status_code=403)
-    if token and not hmac.compare_digest(request.headers.get("X-API-Token",""),token):
-        return JSONResponse({"detail":"Unauthorized"},status_code=401)
-    return await call_next(request)
+# Fail closed for all /api paths, including localhost and proxied requests.
+# The static demo UI remains accessible; its API calls require a token.
+install_auth_guard(app)
 
 class DiagnosticIn(BaseModel):
     asset_id: int = Field(ge=1)
