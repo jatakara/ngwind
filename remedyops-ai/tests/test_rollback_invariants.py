@@ -1,7 +1,6 @@
 """Regression tests for sandbox rollback behavior; no remote connections.
 
-The known unsafe verification-failure path is documented as strict xfail.
-Remove xfail only after the application restores original bytes on failure.
+Post-apply verification failure must restore original bytes or report rollback_failed.
 """
 
 import importlib.util
@@ -51,10 +50,6 @@ def test_high_risk_rule_is_not_applied(sandbox_app):
     assert target.read_bytes() == original
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known defect: failed verification leaves changed bytes and cannot be rolled back",
-)
 def test_failed_verification_restores_original_bytes(sandbox_app, monkeypatch):
     app = sandbox_app
     target = app.TARGET / "logging.conf"
@@ -64,3 +59,18 @@ def test_failed_verification_restores_original_bytes(sandbox_app, monkeypatch):
     outcome = app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
     assert outcome["changes"][0]["status"] == "verification_failed_rolled_back"
     assert target.read_bytes() == original
+
+
+def test_restore_failure_is_explicit_and_not_marked_applied(sandbox_app, monkeypatch):
+    app = sandbox_app
+    target = app.TARGET / "logging.conf"
+    original = target.read_bytes()
+    plan = app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+    monkeypatch.setattr(app, "config", lambda _data: {})
+    monkeypatch.setattr(
+        app, "restore_backup_after_verification_failure",
+        lambda *_args: "rollback_failed",
+    )
+    outcome = app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
+    assert outcome["changes"][0]["status"] == "rollback_failed"
+    assert target.read_bytes() != original
