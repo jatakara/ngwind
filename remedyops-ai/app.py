@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Integer, String, Text, select, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from pathlib import Path
 from datetime import datetime, timezone
+from remediation_safety import restore_backup_after_verification_failure
 import os, json, hashlib, uuid, threading
 
 app = FastAPI(title="RemedyOps AI", version="0.2")
@@ -128,8 +129,11 @@ def apply(req:ApplyIn):
             (STATE/("backup-"+cid+".bin")).write_bytes(before)
             p.write_bytes(after)
             verified=config(p.read_bytes()).get(rule[1])==rule[2]
+            status=("applied" if verified else
+                    restore_backup_after_verification_failure(
+                        p, STATE/("backup-"+cid+".bin"), sha(before)))
             rec={"change_id":cid,"finding_id":fid,"before_hash":sha(before),
-                 "after_hash":sha(after),"status":"applied" if verified else "verification_failed"}
+                 "after_hash":sha(after),"status":status}
             save("change",cid,rec);changes.append(rec);entry["status"]=rec["status"]
         obj["status"]="processed";obj["changes"]=changes;save("plan",req.plan_id,obj)
         event("plan.applied",{"id":req.plan_id,"changes":len(changes)});return obj
