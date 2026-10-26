@@ -74,3 +74,46 @@ def test_restore_failure_is_explicit_and_not_marked_applied(sandbox_app, monkeyp
     outcome = app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
     assert outcome["changes"][0]["status"] == "rollback_failed"
     assert target.read_bytes() != original
+
+
+def test_interrupted_intent_blocks_subsequent_apply(sandbox_app):
+    import recovery_journal as journal
+
+    app = sandbox_app
+    target = app.TARGET / "logging.conf"
+    original = target.read_bytes()
+    planned = app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+    cid = uuid.uuid4().hex
+    journal.record_intent(app.STATE, cid, "LOG-001", app.sha(original), app.sha(b"modified"))
+    with pytest.raises(HTTPException) as exc:
+        app.apply(app.ApplyIn(plan_id=planned["plan_id"], approved=True))
+    assert exc.value.status_code == 409
+    assert target.read_bytes() == original
+
+
+def test_successful_apply_finalizes_intent(sandbox_app):
+    import recovery_journal as journal
+
+    app = sandbox_app
+    planned = app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+    outcome = app.apply(app.ApplyIn(plan_id=planned["plan_id"], approved=True))
+    assert outcome["changes"][0]["status"] == "applied"
+    assert journal.unresolved_changes(app.STATE) == []
+
+
+def test_rollback_failure_blocks_future_changes(sandbox_app, monkeypatch):
+    import recovery_journal as journal
+
+    app = sandbox_app
+    first = app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+    monkeypatch.setattr(app, "config", lambda _data: {})
+    monkeypatch.setattr(
+        app, "restore_backup_after_verification_failure", lambda *_args: "rollback_failed"
+    )
+    outcome = app.apply(app.ApplyIn(plan_id=first["plan_id"], approved=True))
+    assert outcome["changes"][0]["status"] == "rollback_failed"
+    assert journal.unresolved_changes(app.STATE)[0]["status"] == "rollback_failed"
+    second = app.plan(app.PlanIn(finding_ids=["PERM-001"]))
+    with pytest.raises(HTTPException) as exc:
+        app.apply(app.ApplyIn(plan_id=second["plan_id"], approved=True))
+    assert exc.value.status_code == 409
