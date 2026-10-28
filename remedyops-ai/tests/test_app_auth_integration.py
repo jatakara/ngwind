@@ -107,3 +107,40 @@ def test_authenticated_apply_finalizes_recovery_intent(client, monkeypatch, tmp_
     assert response.json()["changes"][0]["status"] == "applied"
     state = tmp_path / "isolated_app" / ".state"
     assert unresolved_changes(state) == []
+
+
+def test_cross_process_lock_blocks_mutating_routes(client, monkeypatch, tmp_path):
+    """An independent worker holding the same state lock denies writes."""
+    from process_lock import InterProcessLock
+
+    monkeypatch.setenv("REMEDYOPS_API_TOKEN", "expected")
+    headers = {"X-API-Token": "expected"}
+    state = tmp_path / "isolated_app" / ".state"
+    target = tmp_path / "isolated_app" / "demo_target" / "logging.conf"
+    before = target.read_bytes()
+    with InterProcessLock(state):
+        for route, payload in (
+            ("/api/plan", {"finding_ids": ["LOG-001"]}),
+            ("/api/apply", {"plan_id": "a" * 32, "approved": True}),
+            ("/api/rollback", {"change_ids": ["a" * 32], "approved": True}),
+        ):
+            response = client.post(route, json=payload, headers=headers)
+            assert response.status_code == 409
+    assert target.read_bytes() == before
+    response = client.post("/api/plan", json={"finding_ids": ["LOG-001"]}, headers=headers)
+    assert response.status_code == 200
+
+
+def test_unsafe_lock_file_fails_closed_in_api(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("REMEDYOPS_API_TOKEN", "expected")
+    state = tmp_path / "isolated_app" / ".state"
+    outside = tmp_path / "outside"
+    outside.write_text("unchanged")
+    (state / ".remedyops.lock").symlink_to(outside)
+    response = client.post(
+        "/api/plan",
+        json={"finding_ids": ["LOG-001"]},
+        headers={"X-API-Token": "expected"},
+    )
+    assert response.status_code == 503
+    assert outside.read_text() == "unchanged"

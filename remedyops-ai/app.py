@@ -1,17 +1,18 @@
 """RemedyOps AI v0.2: localhost-only sandbox demo, NOT a production SSH agent."""
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Integer, String, Text, select, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from pathlib import Path
 from datetime import datetime, timezone
+from process_lock import InterProcessLock, RemediationLockBusy, RemediationLockError
 from remediation_safety import restore_backup_after_verification_failure
 from recovery_journal import (
     RecoveryJournalError, record_intent, record_outcome,
     unresolved_changes, write_durable_backup,
 )
-import os, json, hashlib, uuid, threading
+import os, json, hashlib, uuid
 
 app = FastAPI(title="RemedyOps AI", version="0.2")
 URL = os.getenv("DATABASE_URL", "sqlite:///./remedyops.db")
@@ -50,7 +51,15 @@ TARGET = ROOT / "demo_target"
 STATE = ROOT / ".state"
 TARGET.mkdir(exist_ok=True)
 STATE.mkdir(exist_ok=True)
-LOCK = threading.RLock()
+LOCK = InterProcessLock(STATE)
+
+@app.exception_handler(RemediationLockBusy)
+async def lock_busy(_request, _exc):
+    return JSONResponse({"detail": "Concurrent sandbox operation in progress"}, status_code=409)
+
+@app.exception_handler(RemediationLockError)
+async def lock_unavailable(_request, _exc):
+    return JSONResponse({"detail": "Sandbox lock unavailable; remediation disabled"}, status_code=503)
 RULES = {
     "LOG-001": ("logging.conf", "audit_enabled", "yes", "low"),
     "PERM-001": ("permissions.conf", "temp_mode", "0750", "low"),
