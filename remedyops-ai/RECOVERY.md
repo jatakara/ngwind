@@ -33,14 +33,14 @@ requests. Invalid, truncated, or unreadable journal files also block writes.
 
 ## Limitations
 
-- No automatic crash recovery, process-level locking, or multi-worker fencing.
+- No automatic crash recovery or distributed multi-worker fencing. This PR adds a POSIX flock for cooperating local processes sharing the same .state volume; separate hosts, unshared volumes, or filesystems without reliable flock are unsupported.
 - The journal is not tamper-evident; it requires trusted filesystem ownership.
 - Target writes are not atomic; an interrupted write can leave partial data.
 - A completed journal does not imply full service health or durable audit events.
 - The backup and journal use fsync; other state records still need durability
   hardening and transactional design.
-- `/api/apply` checks pending intents under a process-local lock only.
-  Multiple workers remain **unsupported** until distributed fencing is added.
+- `/api/plan`, `/api/apply`, and `/api/rollback` share a non-blocking local process/file lock. Contention returns HTTP 409; an unsafe/unavailable lock returns HTTP 503. Lock files are mode 0600 and symlinks are rejected. Multiple workers on separate hosts remain **unsupported** until transactional distributed fencing is added.
+- Lock ownership is advisory. Never delete/replace `.state/.remedyops.lock` while processes are active; doing so can split the lock domain.
 
 ## Rollback of this code change
 
