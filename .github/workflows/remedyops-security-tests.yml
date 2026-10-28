@@ -26,3 +26,5 @@ jobs:
       - name: Run unit and isolated integration tests
         working-directory: remedyops-ai
         run: python -m pytest -q tests
+      - name: Build sandbox image (packaging smoke test)
+        run: docker build -t remedyops-ai-security-ci ./remedyops-ai
