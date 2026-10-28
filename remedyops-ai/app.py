@@ -52,6 +52,14 @@ STATE = ROOT / ".state"
 TARGET.mkdir(exist_ok=True)
 STATE.mkdir(exist_ok=True)
 LOCK = InterProcessLock(STATE)
+
+@app.exception_handler(RemediationLockBusy)
+async def lock_busy(_request, _exc):
+    return JSONResponse({"detail": "Concurrent sandbox operation in progress"}, status_code=409)
+
+@app.exception_handler(RemediationLockError)
+async def lock_unavailable(_request, _exc):
+    return JSONResponse({"detail": "Sandbox lock unavailable; remediation disabled"}, status_code=503)
 RULES = {
     "LOG-001": ("logging.conf", "audit_enabled", "yes", "low"),
     "PERM-001": ("permissions.conf", "temp_mode", "0750", "low"),
