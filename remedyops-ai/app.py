@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from process_lock import InterProcessLock, RemediationLockBusy, RemediationLockError
 from remediation_safety import restore_backup_after_verification_failure
+from atomic_config import AtomicConfigError, atomic_replace_config
 from recovery_journal import (
     RecoveryJournalError, record_intent, record_outcome,
     unresolved_changes, write_durable_backup,
@@ -70,8 +71,10 @@ def event(action, detail):
         db.add(Event(action=action,detail=json.dumps(detail)));db.commit()
 def sha(data): return hashlib.sha256(data).hexdigest()
 def file_for(rule):
-    p=(TARGET/rule[0]).resolve()
-    if not p.is_relative_to(TARGET.resolve()) or p.is_symlink(): raise HTTPException(400,"Unsafe path")
+    p=TARGET/rule[0]
+    # Reject the original path before resolve(): resolve() hides symlinks.
+    if p.is_symlink() or not p.resolve().is_relative_to(TARGET.resolve()):
+        raise HTTPException(400,"Unsafe path")
     return p
 def data_file(prefix, ident): return STATE / (prefix+"-"+ident+".json")
 def save(prefix,ident,obj):
@@ -153,7 +156,12 @@ def apply(req:ApplyIn):
                 record_intent(STATE,cid,fid,sha(before),sha(after))
             except (OSError, RecoveryJournalError) as exc:
                 raise HTTPException(503,"Cannot persist remediation intent") from exc
-            p.write_bytes(after)
+            try:
+                atomic_replace_config(p, after, sha(before))
+            except AtomicConfigError as exc:
+                # The durable intent stays prepared even if rename occurred.
+                # Manual recovery is required before another apply.
+                raise HTTPException(503,"Atomic sandbox write failed; manual recovery required") from exc
             verified=config(p.read_bytes()).get(rule[1])==rule[2]
             status=("applied" if verified else
                     restore_backup_after_verification_failure(
