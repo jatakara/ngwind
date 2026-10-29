@@ -7,7 +7,7 @@ rollback mechanism. Do not use this prototype for unattended production changes.
 
 1. Capture and fsync a mode-0600 backup.
 2. Fsync a `prepared` intent record in `.state/journal-<change_id>.json`.
-3. Change the sandbox target and verify its contents.
+3. For /api/apply, verify the expected SHA-256 and atomically replace the sandbox target using a same-directory mode-preserving temporary file, fsync, rename, directory fsync, and exact-byte verification. Then verify the intended configuration.
 4. Persist the change result.
 5. Finalize the intent as `applied`, `verification_failed_rolled_back`,
    or `rollback_failed`.
@@ -35,7 +35,7 @@ requests. Invalid, truncated, or unreadable journal files also block writes.
 
 - No automatic crash recovery or distributed multi-worker fencing. This PR adds a POSIX flock for cooperating local processes sharing the same .state volume; separate hosts, unshared volumes, or filesystems without reliable flock are unsupported.
 - The journal is not tamper-evident; it requires trusted filesystem ownership.
-- Target writes are not atomic; an interrupted write can leave partial data.
+- /api/apply target writes are atomic only for cooperating local POSIX filesystem users; the /api/rollback endpoint still uses non-atomic target writes and requires follow-up hardening. External writers, cross-host mounts, and unexpected metadata (ACLs/SELinux labels/xattrs) are not supported. The atomic helper requires a regular single-link target owned by the sandbox process and preserves POSIX mode, uid, and gid, not extended metadata.\n- An atomic replacement error may happen **after rename** (e.g., directory fsync or post-write verification). In that case the recovery journal remains prepared and the operator must inspect both the target and backup; do not assume the original file survived.
 - A completed journal does not imply full service health or durable audit events.
 - The backup and journal use fsync; other state records still need durability
   hardening and transactional design.
