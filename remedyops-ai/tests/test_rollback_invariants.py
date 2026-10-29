@@ -117,3 +117,39 @@ def test_rollback_failure_blocks_future_changes(sandbox_app, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         app.apply(app.ApplyIn(plan_id=second["plan_id"], approved=True))
     assert exc.value.status_code == 409
+
+
+def test_atomic_write_failure_keeps_intent_pending_and_target_unchanged(sandbox_app, monkeypatch):
+    import atomic_config
+    import recovery_journal as journal
+
+    app = sandbox_app
+    target = app.TARGET / "logging.conf"
+    original = target.read_bytes()
+    planned = app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+
+    def reject_write(*_args):
+        raise atomic_config.AtomicConfigError("injected sandbox write failure")
+
+    monkeypatch.setattr(app, "atomic_replace_config", reject_write)
+    with pytest.raises(HTTPException) as exc:
+        app.apply(app.ApplyIn(plan_id=planned["plan_id"], approved=True))
+    assert exc.value.status_code == 503
+    assert target.read_bytes() == original
+    assert journal.unresolved_changes(app.STATE)[0]["status"] == "prepared"
+    with pytest.raises(HTTPException) as blocked:
+        app.apply(app.ApplyIn(plan_id=planned["plan_id"], approved=True))
+    assert blocked.value.status_code == 409
+
+
+def test_plan_rejects_symlink_config_before_resolution(sandbox_app, tmp_path):
+    app = sandbox_app
+    target = app.TARGET / "logging.conf"
+    target.unlink()
+    outside = tmp_path / "outside.conf"
+    outside.write_bytes(b"outside=unchanged\\n")
+    target.symlink_to(outside)
+    with pytest.raises(HTTPException) as exc:
+        app.plan(app.PlanIn(finding_ids=["LOG-001"]))
+    assert exc.value.status_code == 400
+    assert outside.read_bytes() == b"outside=unchanged\\n"
