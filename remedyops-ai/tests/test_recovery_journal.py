@@ -89,3 +89,38 @@ def test_recovery_scan_does_not_change_target(tmp_path):
     prepare(tmp_path)
     journal.unresolved_changes(tmp_path)
     assert target.read_bytes() == b"partial=change\n"
+
+
+def test_rollback_intent_has_distinct_verified_outcome(tmp_path):
+    journal.record_intent(
+        tmp_path, CID, "LOG-001", AFTER, BEFORE, operation="rollback"
+    )
+    journal.record_outcome(tmp_path, CID, "rolled_back")
+    assert journal.unresolved_changes(tmp_path) == []
+    obj = json.loads((tmp_path / f"journal-{CID}.json").read_text())
+    assert obj["operation"] == "rollback"
+    assert obj["status"] == "rolled_back"
+
+
+def test_mismatched_journal_operation_outcomes_fail_closed(tmp_path):
+    prepare(tmp_path)
+    with pytest.raises(journal.RecoveryJournalError):
+        journal.record_outcome(tmp_path, CID, "rolled_back")
+    assert journal.unresolved_changes(tmp_path)[0]["status"] == "prepared"
+    (tmp_path / f"journal-{CID}.json").unlink()
+    journal.record_intent(
+        tmp_path, CID, "LOG-001", AFTER, BEFORE, operation="rollback"
+    )
+    with pytest.raises(journal.RecoveryJournalError):
+        journal.record_outcome(tmp_path, CID, "applied")
+    assert journal.unresolved_changes(tmp_path)[0]["status"] == "prepared"
+
+
+def test_legacy_apply_journal_without_operation_still_loads(tmp_path):
+    prepare(tmp_path)
+    path = tmp_path / f"journal-{CID}.json"
+    obj = json.loads(path.read_text())
+    obj.pop("operation")
+    path.write_text(json.dumps(obj))
+    journal.record_outcome(tmp_path, CID, "applied")
+    assert journal.unresolved_changes(tmp_path) == []
