@@ -14,7 +14,7 @@ import tempfile
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_FINISHED = frozenset({"applied", "verification_failed_rolled_back"})
+_FINISHED = frozenset({"applied", "verification_failed_rolled_back", "rolled_back"})
 _OUTCOMES = _FINISHED | {"rollback_failed"}
 
 
@@ -64,8 +64,11 @@ def write_durable_backup(path: Path, data: bytes) -> None:
 
 
 def record_intent(
-    state_dir: Path, change_id: str, finding_id: str, before_hash: str, after_hash: str
+    state_dir: Path, change_id: str, finding_id: str, before_hash: str, after_hash: str,
+    operation: str = "apply",
 ) -> None:
+    if operation not in {"apply", "rollback"}:
+        raise RecoveryJournalError("Invalid journal operation")
     path = _journal_path(state_dir, change_id)
     if path.exists() or path.is_symlink():
         raise RecoveryJournalError("Journal already exists")
@@ -80,6 +83,7 @@ def record_intent(
         "before_hash": before_hash,
         "after_hash": after_hash,
         "status": "prepared",
+        "operation": operation,
     }
     _atomic_durable_write(path, json.dumps(obj, sort_keys=True).encode("utf-8"))
 
@@ -97,7 +101,12 @@ def _load(path: Path) -> dict:
     _check_id(cid)
     if path.name != f"journal-{cid}.json":
         raise RecoveryJournalError("Journal filename mismatch")
-    if obj.get("status") not in {"prepared", "rollback_failed"} | _FINISHED:
+    operation = obj.get("operation", "apply")  # Historical journals had no operation.
+    if operation not in {"apply", "rollback"}:
+        raise RecoveryJournalError("Invalid journal operation")
+    valid = ({"prepared", "rolled_back"} if operation == "rollback" else
+             {"prepared", "applied", "verification_failed_rolled_back", "rollback_failed"})
+    if obj.get("status") not in valid:
         raise RecoveryJournalError("Invalid journal status")
     if not isinstance(obj.get("finding_id"), str):
         raise RecoveryJournalError("Missing finding identifier")
@@ -115,6 +124,8 @@ def record_outcome(state_dir: Path, change_id: str, status: str) -> None:
     obj = _load(path)
     if obj["status"] != "prepared":
         raise RecoveryJournalError("Journal is not prepared")
+    if (obj.get("operation", "apply") == "rollback") != (status == "rolled_back"):
+        raise RecoveryJournalError("Journal operation/outcome mismatch")
     obj["status"] = status
     _atomic_durable_write(path, json.dumps(obj, sort_keys=True).encode("utf-8"))
 

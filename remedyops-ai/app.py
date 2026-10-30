@@ -183,7 +183,18 @@ def rollback(req:RollbackIn):
     if not req.approved:raise HTTPException(400,"Approval required")
     if len(req.change_ids)!=len(set(req.change_ids)):raise HTTPException(400,"Duplicate changes")
     with LOCK:
+        # A prepared/failed journal may represent a partially completed write.
+        # Never start a rollback while any previous mutation is unresolved.
+        try:
+            pending=unresolved_changes(STATE)
+        except (OSError, RecoveryJournalError) as exc:
+            raise HTTPException(503,"Recovery journal unreadable; rollback disabled") from exc
+        if pending:
+            raise HTTPException(409,"Unresolved remediation requires manual recovery")
         records=[load("change",cid) for cid in req.change_ids]
+        for requested_id, rec in zip(req.change_ids, records):
+            if rec.get("change_id")!=requested_id or rec.get("finding_id") not in RULES:
+                raise HTTPException(409,"Invalid change record")
         names=[RULES[c["finding_id"]][0] for c in records]
         if len(names)!=len(set(names)):raise HTTPException(409,"Overlapping files: group recovery required")
         results=[]
@@ -194,11 +205,39 @@ def rollback(req:RollbackIn):
             p=file_for(RULES[rec["finding_id"]]);current=p.read_bytes()
             if sha(current)!=rec["after_hash"]:
                 results.append({"id":cid,"status":"conflict"});continue
-            backup=(STATE/("backup-"+cid+".bin")).read_bytes()
-            if sha(backup)!=rec["before_hash"]:raise HTTPException(409,"Backup integrity failure")
-            p.write_bytes(backup);ok=sha(p.read_bytes())==rec["before_hash"]
-            rec["status"]="rolled_back" if ok else "rollback_failed"
-            save("change",cid,rec);results.append({"id":cid,"status":rec["status"]})
+            backup_path=STATE/("backup-"+cid+".bin")
+            try:
+                # Backups are private local files; never follow a symlink.
+                if (backup_path.is_symlink() or not backup_path.is_file()
+                        or backup_path.stat().st_nlink!=1):
+                    raise OSError("Unsafe backup")
+                backup=backup_path.read_bytes()
+            except OSError as exc:
+                raise HTTPException(409,"Backup unavailable or unsafe") from exc
+            if sha(backup)!=rec["before_hash"]:
+                raise HTTPException(409,"Backup integrity failure")
+            rollback_id=uuid.uuid4().hex
+            try:
+                # Preserve the pre-rollback state for crash investigation.
+                write_durable_backup(STATE/("backup-"+rollback_id+".bin"),current)
+                record_intent(STATE,rollback_id,rec["finding_id"],
+                              sha(current),sha(backup),operation="rollback")
+            except (OSError, RecoveryJournalError) as exc:
+                raise HTTPException(503,"Cannot persist rollback intent") from exc
+            try:
+                atomic_replace_config(p,backup,sha(current))
+            except AtomicConfigError as exc:
+                # A failure can occur AFTER rename; do not claim rollback
+                # succeeded or clear the prepared journal.
+                raise HTTPException(503,"Atomic rollback uncertain; manual recovery required") from exc
+            rec["status"]="rolled_back"
+            try:
+                save("change",cid,rec)
+                record_outcome(STATE,rollback_id,"rolled_back")
+            except (OSError, RecoveryJournalError) as exc:
+                # The durable prepared journal prevents future mutations.
+                raise HTTPException(503,"Rollback state persistence failed; manual review required") from exc
+            results.append({"id":cid,"status":"rolled_back"})
         event("rollback.executed",{"results":results});return {"results":results}
 @app.get("/api/audit")
 def audit():
