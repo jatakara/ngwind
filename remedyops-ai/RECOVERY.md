@@ -13,8 +13,26 @@ rollback mechanism. Do not use this prototype for unattended production changes.
    or `rollback_failed`.
 
 A crash between steps 2 and 5 leaves a `prepared` journal. A failed restore
-leaves `rollback_failed`. Either condition blocks subsequent `/api/apply`
+leaves `rollback_failed`. Either condition blocks subsequent `/api/apply` and `/api/rollback`
 requests. Invalid, truncated, or unreadable journal files also block writes.
+
+## Approved rollback sequence (sandbox only)
+
+1. Require explicit approval, the shared process lock, and zero unresolved journals.
+2. Validate the change record and target hash against the applied state; reject
+   missing, symlinked, or corrupted original backups.
+3. Persist a separate mode-0600 backup of the current (post-apply) bytes, then
+   fsync a **rollback** journal with status `prepared` before modifying the target.
+4. Atomically replace the target with the verified original backup using the
+   expected current SHA-256 as a precondition.
+5. Persist the original change record as `rolled_back`, then finalize the
+   rollback journal as `rolled_back`. The journal outcome is distinct from
+   an apply outcome. Historical apply journals without `operation` still load.
+
+Any exception during or after atomic replacement leaves the rollback journal
+`prepared`, blocks both new apply and rollback requests, and requires manual
+inspection. A returned HTTP 503 **does not prove the original target survived**.
+This workflow does not guarantee service recovery or preserve ACLs/xattrs.
 
 ## Manual investigation
 
@@ -35,7 +53,8 @@ requests. Invalid, truncated, or unreadable journal files also block writes.
 
 - No automatic crash recovery or distributed multi-worker fencing. This PR adds a POSIX flock for cooperating local processes sharing the same .state volume; separate hosts, unshared volumes, or filesystems without reliable flock are unsupported.
 - The journal is not tamper-evident; it requires trusted filesystem ownership.
-- /api/apply target writes are atomic only for cooperating local POSIX filesystem users; the /api/rollback endpoint still uses non-atomic target writes and requires follow-up hardening. External writers, cross-host mounts, and unexpected metadata (ACLs/SELinux labels/xattrs) are not supported. The atomic helper requires a regular single-link target owned by the sandbox process and preserves POSIX mode, uid, and gid, not extended metadata.\n- An atomic replacement error may happen **after rename** (e.g., directory fsync or post-write verification). In that case the recovery journal remains prepared and the operator must inspect both the target and backup; do not assume the original file survived.
+- /api/apply and /api/rollback target writes use the same atomic helper only for cooperating local POSIX filesystem users. External writers, cross-host mounts, and unexpected metadata (ACLs/SELinux labels/xattrs) are not supported. The helper requires a regular single-link target owned by the sandbox process and preserves POSIX mode, uid, and gid, not extended metadata.
+- An atomic replacement error may happen **after rename** (e.g., directory fsync or post-write verification). In that case the recovery journal remains prepared and the operator must inspect both the target and backup; do not assume the original file survived.
 - A completed journal does not imply full service health or durable audit events.
 - The backup and journal use fsync; other state records still need durability
   hardening and transactional design.
