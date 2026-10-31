@@ -56,8 +56,15 @@ This workflow does not guarantee service recovery or preserve ACLs/xattrs.
 - /api/apply and /api/rollback target writes use the same atomic helper only for cooperating local POSIX filesystem users. External writers, cross-host mounts, and unexpected metadata (ACLs/SELinux labels/xattrs) are not supported. The helper requires a regular single-link target owned by the sandbox process and preserves POSIX mode, uid, and gid, not extended metadata.
 - An atomic replacement error may happen **after rename** (e.g., directory fsync or post-write verification). In that case the recovery journal remains prepared and the operator must inspect both the target and backup; do not assume the original file survived.
 - A completed journal does not imply full service health or durable audit events.
-- The backup and journal use fsync; other state records still need durability
-  hardening and transactional design.
+- Plan and change JSON state records now use private (0600), same-directory
+  atomic replacement with file and directory fsync. Unsafe symlink or hardlinked
+  records are rejected. If change-record persistence fails, the prepared intent
+  remains unresolved and further apply/rollback requests are blocked.
+- The SQL audit events and JSON state/journal updates are **not one database
+  transaction**. An audit commit or plan-status update can still fail after a
+  verified target mutation; an HTTP error does not imply no change occurred.
+  Compare target hashes, change records, journals, and audit entries manually.
+  No automatic reconciliation or tamper-evident audit guarantee is provided.
 - `/api/plan`, `/api/apply`, and `/api/rollback` share a non-blocking local process/file lock. Contention returns HTTP 409; an unsafe/unavailable lock returns HTTP 503. Lock files are mode 0600 and symlinks are rejected. Multiple workers on separate hosts remain **unsupported** until transactional distributed fencing is added.
 - Lock ownership is advisory. Never delete/replace `.state/.remedyops.lock` while processes are active; doing so can split the lock domain.
 
