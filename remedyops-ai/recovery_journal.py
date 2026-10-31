@@ -55,6 +55,21 @@ def _atomic_durable_write(path: Path, payload: bytes) -> None:
             tmp.unlink(missing_ok=True)
 
 
+def write_durable_state(path: Path, data: bytes) -> None:
+    """Durably create/replace a private state record (not a target config).
+
+    Refuse symlinks, special files, and hardlinked records. The state
+    directory must remain private to the controller; this is not a
+    distributed transaction or a defense against a hostile local writer.
+    """
+    path = Path(path)
+    if path.is_symlink():
+        raise RecoveryJournalError("Unsafe state record symlink")
+    if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
+        raise RecoveryJournalError("Unsafe state record")
+    _atomic_durable_write(path, data)
+
+
 def write_durable_backup(path: Path, data: bytes) -> None:
     """Persist a backup before recording an intent or modifying a target."""
     path = Path(path)
