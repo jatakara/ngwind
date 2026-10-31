@@ -11,7 +11,7 @@ from remediation_safety import restore_backup_after_verification_failure
 from atomic_config import AtomicConfigError, atomic_replace_config
 from recovery_journal import (
     RecoveryJournalError, record_intent, record_outcome,
-    unresolved_changes, write_durable_backup,
+    unresolved_changes, write_durable_backup, write_durable_state,
 )
 import os, json, hashlib, uuid
 
@@ -78,8 +78,10 @@ def file_for(rule):
     return p
 def data_file(prefix, ident): return STATE / (prefix+"-"+ident+".json")
 def save(prefix,ident,obj):
-    p=data_file(prefix,ident);tmp=p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj,indent=2),encoding="utf-8");os.replace(tmp,p)
+    p=data_file(prefix,ident)
+    # Persist state records before finalizing a recovery intent. fsync both
+    # the file and its directory; a failed sync must not signal success.
+    write_durable_state(p, json.dumps(obj, indent=2).encode("utf-8"))
 def load(prefix,ident):
     if not ident.isalnum(): raise HTTPException(400,"Invalid ID")
     p=data_file(prefix,ident)
@@ -168,10 +170,15 @@ def apply(req:ApplyIn):
                         p, backup_path, sha(before)))
             rec={"change_id":cid,"finding_id":fid,"before_hash":sha(before),
                  "after_hash":sha(after),"status":status}
-            save("change",cid,rec)
-            # Finalize only after the change record is persisted. An interrupted
-            # finalization leaves an unresolved intent and blocks future apply.
-            record_outcome(STATE,cid,status)
+            try:
+                save("change",cid,rec)
+                # Finalize only after the change record is durably persisted.
+                # A failed sync or finalization leaves an unresolved intent.
+                record_outcome(STATE,cid,status)
+            except (OSError, RecoveryJournalError) as exc:
+                raise HTTPException(
+                    503, "Remediation state persistence failed; manual review required"
+                ) from exc
             changes.append(rec);entry["status"]=rec["status"]
         obj["status"]="processed";obj["changes"]=changes;save("plan",req.plan_id,obj)
         event("plan.applied",{"id":req.plan_id,"changes":len(changes)});return obj
