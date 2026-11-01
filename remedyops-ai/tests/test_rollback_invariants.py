@@ -71,8 +71,12 @@ def test_restore_failure_is_explicit_and_not_marked_applied(sandbox_app, monkeyp
         app, "restore_backup_after_verification_failure",
         lambda *_args: "rollback_failed",
     )
-    outcome = app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
-    assert outcome["changes"][0]["status"] == "rollback_failed"
+    with pytest.raises(HTTPException) as exc:
+        app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
+    assert exc.value.status_code == 503
+    records = app.changes()
+    assert len(records) == 1 and records[0]["status"] == "rollback_failed"
+    assert app.load("plan", plan["plan_id"])["status"] == "failed"
     assert target.read_bytes() != original
 
 
@@ -110,8 +114,10 @@ def test_rollback_failure_blocks_future_changes(sandbox_app, monkeypatch):
     monkeypatch.setattr(
         app, "restore_backup_after_verification_failure", lambda *_args: "rollback_failed"
     )
-    outcome = app.apply(app.ApplyIn(plan_id=first["plan_id"], approved=True))
-    assert outcome["changes"][0]["status"] == "rollback_failed"
+    with pytest.raises(HTTPException) as failed:
+        app.apply(app.ApplyIn(plan_id=first["plan_id"], approved=True))
+    assert failed.value.status_code == 503
+    assert app.changes()[0]["status"] == "rollback_failed"
     assert journal.unresolved_changes(app.STATE)[0]["status"] == "rollback_failed"
     second = app.plan(app.PlanIn(finding_ids=["PERM-001"]))
     with pytest.raises(HTTPException) as exc:
@@ -153,3 +159,61 @@ def test_plan_rejects_symlink_config_before_resolution(sandbox_app, tmp_path):
         app.plan(app.PlanIn(finding_ids=["LOG-001"]))
     assert exc.value.status_code == 400
     assert outside.read_bytes() == b"outside=unchanged\\n"
+
+
+def test_failed_restore_stops_remaining_batch_before_second_write(
+    sandbox_app, monkeypatch
+):
+    """A failed restore must stop *this* apply, not just future requests."""
+    import recovery_journal as journal
+
+    app = sandbox_app
+    first = app.TARGET / "logging.conf"
+    second = app.TARGET / "permissions.conf"
+    original_second = second.read_bytes()
+    plan = app.plan(app.PlanIn(finding_ids=["LOG-001", "PERM-001"]))
+    monkeypatch.setattr(app, "config", lambda _data: {})
+    monkeypatch.setattr(
+        app, "restore_backup_after_verification_failure",
+        lambda *_args: "rollback_failed",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
+
+    assert exc.value.status_code == 503
+    assert second.read_bytes() == original_second
+    changes = app.changes()
+    assert len(changes) == 1 and changes[0]["finding_id"] == "LOG-001"
+    assert changes[0]["status"] == "rollback_failed"
+    assert len(journal.unresolved_changes(app.STATE)) == 1
+    saved_plan = app.load("plan", plan["plan_id"])
+    assert saved_plan["status"] == "failed"
+    assert saved_plan["entries"][0]["status"] == "rollback_failed"
+    assert saved_plan["entries"][1]["status"] == "planned"
+    assert saved_plan["changes"] == changes
+    with pytest.raises(HTTPException) as blocked:
+        app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
+    assert blocked.value.status_code == 409
+
+
+def test_successful_verified_restore_can_continue_other_batch_entries(
+    sandbox_app, monkeypatch
+):
+    """A verified restore does not strand unrelated low-risk findings."""
+    app = sandbox_app
+    original_config = app.config
+    first = app.TARGET / "logging.conf"
+    original_first = first.read_bytes()
+    plan = app.plan(app.PlanIn(finding_ids=["LOG-001", "PERM-001"]))
+    monkeypatch.setattr(
+        app, "config",
+        lambda data: {} if b"audit_enabled" in data else original_config(data),
+    )
+
+    outcome = app.apply(app.ApplyIn(plan_id=plan["plan_id"], approved=True))
+    assert [c["status"] for c in outcome["changes"]] == [
+        "verification_failed_rolled_back", "applied"
+    ]
+    assert first.read_bytes() == original_first
+    assert b"temp_mode=0750" in (app.TARGET / "permissions.conf").read_bytes()
