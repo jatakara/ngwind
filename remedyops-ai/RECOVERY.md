@@ -16,6 +16,16 @@ A crash between steps 2 and 5 leaves a `prepared` journal. A failed restore
 leaves `rollback_failed`. Either condition blocks subsequent `/api/apply` and `/api/rollback`
 requests. Invalid, truncated, or unreadable journal files also block writes.
 
+**Batch fail-closed rule (2026-11-01):** If verification fails and restoring
+the backup also fails, `/api/apply` stops immediately rather than processing
+later findings in the same request. It durably records the partial plan as
+`failed`, keeps the `rollback_failed` journal unresolved, emits a
+`plan.failed` audit event, and returns HTTP 503. Earlier changes in that
+batch may already have been applied; HTTP 503 does **not** imply an all-or-
+nothing transaction. Inspect `/api/changes`, the plan record, and the
+recovery journal before any manual recovery. A successfully verified restore
+(`verification_failed_rolled_back`) does not itself abort later findings.
+
 ## Approved rollback sequence (sandbox only)
 
 1. Require explicit approval, the shared process lock, and zero unresolved journals.
