@@ -180,6 +180,20 @@ def apply(req:ApplyIn):
                     503, "Remediation state persistence failed; manual review required"
                 ) from exc
             changes.append(rec);entry["status"]=rec["status"]
+            if status == "rollback_failed":
+                # The recovery journal is now unresolved. Stop this *batch*
+                # immediately: the next entry must not mutate another file.
+                # Persist the partial result before reporting failure.
+                obj["status"] = "failed"
+                obj["changes"] = changes
+                save("plan", req.plan_id, obj)
+                event("plan.failed", {
+                    "id": req.plan_id, "change_id": cid,
+                    "reason": "rollback_failed",
+                })
+                raise HTTPException(
+                    503, "Sandbox restore failed; manual recovery required"
+                )
         obj["status"]="processed";obj["changes"]=changes;save("plan",req.plan_id,obj)
         event("plan.applied",{"id":req.plan_id,"changes":len(changes)});return obj
 @app.get("/api/changes")
