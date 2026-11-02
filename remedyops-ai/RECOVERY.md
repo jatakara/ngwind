@@ -8,9 +8,12 @@ rollback mechanism. Do not use this prototype for unattended production changes.
 1. Capture and fsync a mode-0600 backup.
 2. Fsync a `prepared` intent record in `.state/journal-<change_id>.json`.
 3. For /api/apply, verify the expected SHA-256 and atomically replace the sandbox target using a same-directory mode-preserving temporary file, fsync, rename, directory fsync, and exact-byte verification. Then verify the intended configuration.
-4. Persist the change result.
-5. Finalize the intent as `applied`, `verification_failed_rolled_back`,
-   or `rollback_failed`.
+4. Durably persist the change result, then commit a per-change SQL audit event
+   (`change.outcome`) containing the change ID, finding ID, verified status and
+   before/after hashes. A failed SQL audit commit leaves the journal `prepared`
+   and stops the batch with HTTP 503.
+5. Only after the per-change audit succeeds, finalize the intent as `applied`,
+   `verification_failed_rolled_back`, or `rollback_failed`.
 
 A crash between steps 2 and 5 leaves a `prepared` journal. A failed restore
 leaves `rollback_failed`. Either condition blocks subsequent `/api/apply` and `/api/rollback`
@@ -35,9 +38,11 @@ recovery journal before any manual recovery. A successfully verified restore
    fsync a **rollback** journal with status `prepared` before modifying the target.
 4. Atomically replace the target with the verified original backup using the
    expected current SHA-256 as a precondition.
-5. Persist the original change record as `rolled_back`, then finalize the
-   rollback journal as `rolled_back`. The journal outcome is distinct from
-   an apply outcome. Historical apply journals without `operation` still load.
+5. Persist the original change record as `rolled_back`, commit a per-change
+   SQL audit event (`rollback.outcome`), then finalize the rollback journal as
+   `rolled_back`. A failed audit commit leaves the rollback journal `prepared`
+   and blocks further mutations. Historical apply journals without `operation`
+   still load.
 
 Any exception during or after atomic replacement leaves the rollback journal
 `prepared`, blocks both new apply and rollback requests, and requires manual
@@ -70,6 +75,12 @@ This workflow does not guarantee service recovery or preserve ACLs/xattrs.
   atomic replacement with file and directory fsync. Unsafe symlink or hardlinked
   records are rejected. If change-record persistence fails, the prepared intent
   remains unresolved and further apply/rollback requests are blocked.
+- The per-change SQL audit event is now required **before** journal finalization
+  for both apply and rollback. A SQL audit failure leaves a `prepared` journal,
+  returns HTTP 503, and requires manual reconciliation; it does not undo an
+  already-mutated sandbox target. A successful audit commit followed by a
+  journal-finalization failure can leave an audit event for an unresolved
+  operation. Do not infer completion from the audit row alone.
 - The SQL audit events and JSON state/journal updates are **not one database
   transaction**. An audit commit or plan-status update can still fail after a
   verified target mutation; an HTTP error does not imply no change occurred.

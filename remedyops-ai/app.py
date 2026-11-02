@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Integer, String, Text, select, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
+from sqlalchemy.exc import SQLAlchemyError
 from pathlib import Path
 from datetime import datetime, timezone
 from process_lock import InterProcessLock, RemediationLockBusy, RemediationLockError
@@ -172,10 +173,15 @@ def apply(req:ApplyIn):
                  "after_hash":sha(after),"status":status}
             try:
                 save("change",cid,rec)
-                # Finalize only after the change record is durably persisted.
-                # A failed sync or finalization leaves an unresolved intent.
+                # Audit the verified outcome before finalizing the journal.
+                # If the audit DB fails, leave the intent prepared and abort
+                # this batch; never allow later files to be changed.
+                event("change.outcome", {
+                    "change_id": cid, "finding_id": fid, "status": status,
+                    "before_hash": rec["before_hash"], "after_hash": rec["after_hash"],
+                })
                 record_outcome(STATE,cid,status)
-            except (OSError, RecoveryJournalError) as exc:
+            except (OSError, RecoveryJournalError, SQLAlchemyError) as exc:
                 raise HTTPException(
                     503, "Remediation state persistence failed; manual review required"
                 ) from exc
@@ -254,8 +260,15 @@ def rollback(req:RollbackIn):
             rec["status"]="rolled_back"
             try:
                 save("change",cid,rec)
+                # A rollback must have a committed audit event before its
+                # recovery intent can be marked complete.
+                event("rollback.outcome", {
+                    "change_id": cid, "rollback_id": rollback_id,
+                    "finding_id": rec["finding_id"], "status": "rolled_back",
+                    "before_hash": rec["after_hash"], "after_hash": rec["before_hash"],
+                })
                 record_outcome(STATE,rollback_id,"rolled_back")
-            except (OSError, RecoveryJournalError) as exc:
+            except (OSError, RecoveryJournalError, SQLAlchemyError) as exc:
                 # The durable prepared journal prevents future mutations.
                 raise HTTPException(503,"Rollback state persistence failed; manual review required") from exc
             results.append({"id":cid,"status":"rolled_back"})
