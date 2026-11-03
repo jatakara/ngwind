@@ -84,10 +84,28 @@ def save(prefix,ident,obj):
     # the file and its directory; a failed sync must not signal success.
     write_durable_state(p, json.dumps(obj, indent=2).encode("utf-8"))
 def load(prefix,ident):
-    if not ident.isalnum(): raise HTTPException(400,"Invalid ID")
-    p=data_file(prefix,ident)
-    if not p.exists():raise HTTPException(404,"Record not found")
-    return json.loads(p.read_text(encoding="utf-8"))
+    # IDs are generated as 32 lowercase hex digits; reject arbitrary names.
+    if not isinstance(ident, str) or len(ident) != 32 or any(
+        ch not in "0123456789abcdef" for ch in ident
+    ):
+        raise HTTPException(400, "Invalid ID")
+    p = data_file(prefix, ident)
+    # State records must never be symlinks or multiply-linked files.
+    # A missing record remains a 404; an unsafe record fails closed.
+    if p.is_symlink():
+        raise HTTPException(503, "Unsafe state record")
+    try:
+        st = p.stat()
+    except FileNotFoundError:
+        raise HTTPException(404, "Record not found")
+    except OSError as exc:
+        raise HTTPException(503, "State record unavailable") from exc
+    if not p.is_file() or st.st_nlink != 1 or st.st_size > 1024 * 1024:
+        raise HTTPException(503, "Unsafe state record")
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise HTTPException(503, "Unreadable state record") from exc
 def config(data):
     return dict(line.split("=",1) for line in data.decode().splitlines() if "=" in line)
 def change(data,key,value):
