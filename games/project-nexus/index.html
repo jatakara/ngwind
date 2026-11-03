@@ -8,20 +8,21 @@
 <div class="actions"><button id="tower">포탑 설치 (20 자원)</button><button id="start">웨이브 시작</button></div>
 <footer><b>플레이:</b> 포탑 설치 버튼을 누른 후 맵의 격자 칸을 클릭/터치하세요. 적은 왼쪽에서 오른쪽 기지로 이동합니다. 웨이브를 버티고 자원을 모아 방어선을 확장하세요.<p id="status" role="status">포탑을 배치하고 웨이브를 시작하세요.</p></footer></main>
 <script src="./rules.js"></script>
+<script src="./wave.js"></script>
 <script>
 (()=>{'use strict';
 const c=document.querySelector('#game'),x=c.getContext('2d'),E=id=>document.getElementById(id);
 const W=800,H=480,CELL=40,LANE=240;let state,towers,enemies,bullets,last=0,spawn=0,remaining=0,mode='tower',running=false;
 const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-function reset(){state={hp:100,credits:50,score:0,wave:1,dead:false};towers=[];enemies=[];bullets=[];spawn=0;remaining=0;running=false;mode='tower';E('status').textContent='포탑을 배치하고 웨이브를 시작하세요.';update()}
-function update(){for(const k of ['hp','credits','score','wave'])E(k).textContent=state[k];E('start').disabled=running||state.dead;E('tower').disabled=state.dead}
-function begin(){if(running||state.dead)return;running=true;remaining=4+state.wave*2;spawn=.1;E('status').textContent='웨이브 진행 중';update()}
+function reset(){state=NexusWave.initial();towers=[];enemies=[];bullets=[];spawn=0;remaining=0;running=false;mode='tower';E('status').textContent='포탑을 배치하고 웨이브를 시작하세요.';update()}
+function update(){for(const k of ['hp','credits','score','wave'])E(k).textContent=state[k];E('start').disabled=running||state.dead;E('tower').disabled=state.dead||state.credits<NexusRules.COST}
+function begin(){if(running||state.dead)return;const next=NexusWave.start(state,running);if(!next)return;running=true;remaining=next.remaining;spawn=next.spawn;E('status').textContent='웨이브 진행 중';update()}
 function place(event){if(state.dead||mode!=='tower')return;const cell=NexusRules.pointerToCell(event.clientX,event.clientY,c.getBoundingClientRect());if(!NexusRules.canPlaceTower(cell,towers,state.credits))return;state.credits-=NexusRules.COST;towers.push({x:cell.x,y:cell.y,cool:0});update()}
 function tick(dt){if(state.dead)return;if(running&&remaining>0){spawn-=dt;if(spawn<=0){enemies.push({x:-20,y:LANE,hp:2+Math.floor(state.wave/2),max:2+Math.floor(state.wave/2),speed:35+state.wave*3});remaining--;spawn=.9}}
 for(const t of towers){t.cool-=dt;const target=NexusRules.selectTarget(t,enemies,bullets);if(target&&t.cool<=0){bullets.push({x:t.x,y:t.y,target,speed:450});t.cool=.55}}
-for(const b of [...bullets]){if(!enemies.includes(b.target)){bullets.splice(bullets.indexOf(b),1);continue}const d=distance(b,b.target),m=Math.min(d,b.speed*dt);if(d>0){b.x+=(b.target.x-b.x)*m/d;b.y+=(b.target.y-b.y)*m/d}if(d<=8||m>=d){b.target.hp--;bullets.splice(bullets.indexOf(b),1);if(b.target.hp<=0){enemies.splice(enemies.indexOf(b.target),1);state.score+=10;state.credits+=5}}}
-for(const e of [...enemies]){e.x+=e.speed*dt;if(e.x>=770){enemies.splice(enemies.indexOf(e),1);state.hp=Math.max(0,state.hp-15);if(!state.hp){state.dead=true;running=false;E('status').textContent='게임 오버! 다시 시작으로 재도전하세요.'}}}
-if(running&&remaining===0&&enemies.length===0){running=false;state.credits+=15;state.wave++;E('status').textContent='웨이브 클리어! 보너스 자원 +15';}update()}
+for(const b of [...bullets]){if(!enemies.includes(b.target)){bullets.splice(bullets.indexOf(b),1);continue}const d=distance(b,b.target),m=Math.min(d,b.speed*dt);if(d>0){b.x+=(b.target.x-b.x)*m/d;b.y+=(b.target.y-b.y)*m/d}if(d<=8||m>=d){b.target.hp--;bullets.splice(bullets.indexOf(b),1);if(b.target.hp<=0){enemies.splice(enemies.indexOf(b.target),1);state=NexusWave.defeat(state)}}}
+for(const e of [...enemies]){e.x+=e.speed*dt;if(e.x>=770){enemies.splice(enemies.indexOf(e),1);state=NexusWave.escape(state);if(state.dead){running=false;E('status').textContent='게임 오버! 다시 시작으로 재도전하세요.'}}}
+const victory=NexusWave.finish(state,running,remaining,enemies.length);if(victory){running=false;state=victory;E('status').textContent='웨이브 클리어! 보너스 자원 +15';}update()}
 function draw(){x.clearRect(0,0,W,H);x.strokeStyle='#1d3150';x.lineWidth=1;for(let i=0;i<=W;i+=CELL){x.beginPath();x.moveTo(i,0);x.lineTo(i,H);x.stroke()}for(let i=0;i<=H;i+=CELL){x.beginPath();x.moveTo(0,i);x.lineTo(W,i);x.stroke()}x.fillStyle='#162c49';x.fillRect(0,LANE-30,W,60);x.fillStyle='#36d8ce';x.fillRect(770,LANE-55,18,110);x.fillStyle='#9edaf8';x.font='15px system-ui';x.fillText('CORE',745,LANE-65);for(const t of towers){x.fillStyle='#20c1ff';x.fillRect(t.x-13,t.y-13,26,26);x.fillStyle='#e0faff';x.fillRect(t.x-5,t.y-5,10,10)}for(const e of enemies){x.fillStyle='#ff6b78';x.beginPath();x.arc(e.x,e.y,13,0,Math.PI*2);x.fill();x.fillStyle='#76ff9b';x.fillRect(e.x-15,e.y-24,30*e.hp/e.max,4)}for(const b of bullets){x.fillStyle='#ffe28b';x.beginPath();x.arc(b.x,b.y,5,0,Math.PI*2);x.fill()}if(state.dead){x.fillStyle='#071323cc';x.fillRect(0,0,W,H);x.textAlign='center';x.fillStyle='#ff8495';x.font='bold 48px system-ui';x.fillText('GAME OVER',W/2,H/2);x.textAlign='left'}}
 function frame(now){const dt=Math.min((now-last)/1000||0,.05);last=now;tick(dt);draw();requestAnimationFrame(frame)}
 E('restart').addEventListener('click',reset);E('start').addEventListener('click',begin);E('tower').addEventListener('click',()=>{mode='tower';E('status').textContent='포탑 설치할 위치를 클릭하세요 (경로 제외)'});c.addEventListener('pointerdown',place);reset();requestAnimationFrame(frame);
