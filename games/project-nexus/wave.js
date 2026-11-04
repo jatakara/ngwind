@@ -12,10 +12,14 @@
     return { remaining: 4 + state.wave * 2, spawn: 0.1 };
   }
   function escape(state) {
+    if (state.dead) return state;
     const hp = Math.max(0, state.hp - 15);
     return { ...state, hp, dead: hp === 0 };
   }
-  function defeat(state) { return { ...state, score: state.score + 10, credits: state.credits + 5 }; }
+  function defeat(state) {
+    if (state.dead) return state;
+    return { ...state, score: state.score + 10, credits: state.credits + 5 };
+  }
   function finish(state, running, remaining, enemiesCount) {
     if (!running || remaining !== 0 || enemiesCount !== 0 || state.dead) return null;
     return { ...state, wave: state.wave + 1, credits: state.credits + 15 };
