@@ -20,3 +20,10 @@ test('defeat awards points and credits without mutating original state', () => {
  const s=wave.initial();const next=wave.defeat(s);
  assert.equal(s.score,0);assert.equal(next.score,10);assert.equal(next.credits,55);
 });
+
+test('terminal state is immutable under later escapes or kill rewards', () => {
+ const dead = {...wave.initial(),hp:0,dead:true,score:40,credits:25};
+ assert.deepEqual(wave.escape(dead),dead);
+ assert.deepEqual(wave.defeat(dead),dead);
+ assert.equal(wave.finish(dead,true,0,0),null);
+});
