@@ -90,22 +90,33 @@ def load(prefix,ident):
     ):
         raise HTTPException(400, "Invalid ID")
     p = data_file(prefix, ident)
-    # State records must never be symlinks or multiply-linked files.
-    # A missing record remains a 404; an unsafe record fails closed.
-    if p.is_symlink():
-        raise HTTPException(503, "Unsafe state record")
+    # Open once and validate the opened inode, not a separately stat'ed path.
+    # O_NOFOLLOW blocks final-component symlinks; fstat prevents TOCTOU.
+    import stat
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise HTTPException(503, "Safe state reads unsupported")
+    flags |= os.O_NOFOLLOW
     try:
-        st = p.stat()
-    except FileNotFoundError:
-        raise HTTPException(404, "Record not found")
+        fd = os.open(p, flags)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Record not found") from exc
     except OSError as exc:
-        raise HTTPException(503, "State record unavailable") from exc
-    if not p.is_file() or st.st_nlink != 1 or st.st_size > 1024 * 1024:
-        raise HTTPException(503, "Unsafe state record")
+        raise HTTPException(503, "Unsafe state record") from exc
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > 1024 * 1024:
+            raise HTTPException(503, "Unsafe state record")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise HTTPException(503, "Oversized state record")
+        return json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise HTTPException(503, "Unreadable state record") from exc
+    finally:
+        os.close(fd)
+
 def config(data):
     return dict(line.split("=",1) for line in data.decode().splitlines() if "=" in line)
 def change(data,key,value):
