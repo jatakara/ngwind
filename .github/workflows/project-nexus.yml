@@ -1,0 +1,19 @@
+name: Project Nexus tests
+on:
+  pull_request:
+    paths:
+      - 'games/project-nexus/**'
+      - '.github/workflows/project-nexus.yml'
+  push:
+    paths:
+      - 'games/project-nexus/**'
+      - '.github/workflows/project-nexus.yml'
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run game rule tests
+        run: node --test games/project-nexus/*.test.js
