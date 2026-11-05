@@ -233,7 +233,16 @@ def apply(req:ApplyIn):
         event("plan.applied",{"id":req.plan_id,"changes":len(changes)});return obj
 @app.get("/api/changes")
 def changes():
-    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(STATE.glob("change-*.json"))]
+    # Reuse the hardened descriptor-based reader; never follow a link while listing.
+    # Fail closed if any matching record is malformed or unsafe.
+    records = []
+    for p in sorted(STATE.glob("change-*.json")):
+        ident = p.name.removeprefix("change-").removesuffix(".json")
+        rec = load("change", ident)
+        if not isinstance(rec, dict) or rec.get("change_id") != ident:
+            raise HTTPException(503, "Invalid change record")
+        records.append(rec)
+    return records
 @app.post("/api/rollback")
 def rollback(req:RollbackIn):
     if not req.approved:raise HTTPException(400,"Approval required")
