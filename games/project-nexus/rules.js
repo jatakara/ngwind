@@ -24,6 +24,7 @@
     return !!cell && Number.isFinite(cell.x) && Number.isFinite(cell.y)
       && Number.isFinite(credits) && credits >= COST
       && cell.x >= 80 && cell.x <= 720 && cell.y >= 0 && cell.y < HEIGHT
+      && (cell.x - CELL / 2) % CELL === 0 && (cell.y - CELL / 2) % CELL === 0
       && Math.abs(cell.y - LANE) >= 38
       && !towers.some(t => distance(t, cell) < CELL);
   }
