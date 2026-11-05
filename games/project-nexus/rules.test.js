@@ -37,3 +37,10 @@ test('target selection ignores out-of-range and defeated enemies', () => {
   assert.equal(rules.selectTarget(tower, [{ x: 800, y: 240, hp: 2 }], []), null);
   assert.equal(rules.selectTarget(tower, [{ x: 320, y: 240, hp: 0 }], []), null);
 });
+
+
+test('placement rejects non-grid positions even with sufficient credits', () => {
+  assert.equal(rules.canPlaceTower({ x: 301, y: 180 }, [], 100), false);
+  assert.equal(rules.canPlaceTower({ x: 300, y: 181 }, [], 100), false);
+  assert.equal(rules.canPlaceTower({ x: 300, y: 180 }, [], 100), true);
+});
