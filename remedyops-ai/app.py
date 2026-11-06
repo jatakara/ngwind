@@ -238,7 +238,14 @@ def changes():
     records = []
     for p in sorted(STATE.glob("change-*.json")):
         ident = p.name.removeprefix("change-").removesuffix(".json")
-        rec = load("change", ident)
+        try:
+            rec = load("change", ident)
+        except HTTPException as exc:
+            # A record disappearing between glob() and open() is a broken
+            # snapshot, not a valid empty result. Fail closed consistently.
+            if exc.status_code == 404:
+                raise HTTPException(503, "Change listing changed during read") from exc
+            raise
         if not isinstance(rec, dict) or rec.get("change_id") != ident:
             raise HTTPException(503, "Invalid change record")
         records.append(rec)

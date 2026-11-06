@@ -48,3 +48,38 @@ def test_changes_fails_closed_on_invalid_records(tmp_path, monkeypatch, filename
     with pytest.raises(HTTPException) as exc:
         app.changes()
     assert exc.value.status_code in (400, 503)
+
+
+def test_changes_fails_closed_when_record_disappears_after_glob(tmp_path, monkeypatch):
+    """A concurrent deletion must not leak a misleading 404 from listing."""
+    import app
+    monkeypatch.setattr(app, "STATE", tmp_path)
+    ident = "f" * 32
+    app.save("change", ident, {"change_id": ident, "status": "applied"})
+    original_load = app.load
+
+    def remove_before_open(prefix, record_id):
+        (tmp_path / f"{prefix}-{record_id}.json").unlink()
+        return original_load(prefix, record_id)
+
+    monkeypatch.setattr(app, "load", remove_before_open)
+    with pytest.raises(HTTPException) as exc:
+        app.changes()
+    assert exc.value.status_code == 503
+    assert "during read" in exc.value.detail
+
+
+def test_changes_does_not_mask_other_load_failures(tmp_path, monkeypatch):
+    import app
+    monkeypatch.setattr(app, "STATE", tmp_path)
+    ident = "f" * 32
+    app.save("change", ident, {"change_id": ident})
+
+    def fail_unsafe(_prefix, _ident):
+        raise HTTPException(503, "Unsafe state record")
+
+    monkeypatch.setattr(app, "load", fail_unsafe)
+    with pytest.raises(HTTPException) as exc:
+        app.changes()
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Unsafe state record"
