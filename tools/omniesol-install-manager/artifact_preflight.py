@@ -24,7 +24,7 @@ class ArtifactError(ValueError):
 
 
 def _safe_name(name: str) -> str:
-    if not name or "\\x00" in name or "\\\\" in name or _DRIVE.match(name):
+    if not name or "\x00" in name or "\\" in name or _DRIVE.match(name):
         raise ArtifactError("Invalid archive member name")
     if name.startswith("/") or name.startswith("//"):
         raise ArtifactError("Absolute member path")
@@ -106,4 +106,4 @@ def save_manifest(manifest: dict, destination: str | Path) -> None:
         raise ArtifactError("Refusing to overwrite existing manifest")
     with target.open("x", encoding="utf-8") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)
-        handle.write("\\n")
+        handle.write("\n")
