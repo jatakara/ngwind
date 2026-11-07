@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from process_lock import InterProcessLock, RemediationLockBusy, RemediationLockError
 from remediation_safety import restore_backup_after_verification_failure
 from atomic_config import AtomicConfigError, atomic_replace_config
+from backup_safety import read_private_backup
 from recovery_journal import (
     RecoveryJournalError, record_intent, record_outcome,
     unresolved_changes, write_durable_backup, write_durable_state,
@@ -280,10 +281,7 @@ def rollback(req:RollbackIn):
             backup_path=STATE/("backup-"+cid+".bin")
             try:
                 # Backups are private local files; never follow a symlink.
-                if (backup_path.is_symlink() or not backup_path.is_file()
-                        or backup_path.stat().st_nlink!=1):
-                    raise OSError("Unsafe backup")
-                backup=backup_path.read_bytes()
+                backup = read_private_backup(backup_path)
             except OSError as exc:
                 raise HTTPException(409,"Backup unavailable or unsafe") from exc
             if sha(backup)!=rec["before_hash"]:
