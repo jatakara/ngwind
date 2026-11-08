@@ -19,7 +19,7 @@ def read_private_backup(path, max_bytes=1024 * 1024):
             fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), dir_fd=directory)
             try:
                 st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > max_bytes:
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_mode & 0o022 or st.st_size > max_bytes:
                     raise UnsafeBackupError("Unsafe backup inode")
                 with os.fdopen(fd, "rb", closefd=False) as stream:
                     content = stream.read(max_bytes + 1)
