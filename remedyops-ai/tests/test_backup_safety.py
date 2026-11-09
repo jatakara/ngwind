@@ -55,3 +55,54 @@ def test_nonwritable_backup_inode_allowed(tmp_path, mode):
     p.write_bytes(b"trusted")
     p.chmod(mode)
     assert read_private_backup(p) == b"trusted"
+
+
+def test_foreign_owned_backup_inode_rejected(tmp_path, monkeypatch):
+    """Simulate foreign ownership without chown/root privileges."""
+    import stat
+    from types import SimpleNamespace
+    import backup_safety
+    p = tmp_path / "backup.bin"
+    p.write_bytes(b"private")
+    original = backup_safety.os.fstat
+    uid = os.geteuid()
+
+    def foreign_file(fd):
+        st = original(fd)
+        if stat.S_ISREG(st.st_mode):
+            return SimpleNamespace(st_mode=st.st_mode, st_nlink=st.st_nlink,
+                                   st_size=st.st_size, st_uid=uid + 1)
+        return st
+
+    monkeypatch.setattr(backup_safety.os, "fstat", foreign_file)
+    with pytest.raises(UnsafeBackupError):
+        read_private_backup(p)
+
+
+def test_foreign_owned_backup_directory_rejected(tmp_path, monkeypatch):
+    """A safe file inside an untrusted parent is not accepted."""
+    import stat
+    from types import SimpleNamespace
+    import backup_safety
+    p = tmp_path / "backup.bin"
+    p.write_bytes(b"private")
+    original = backup_safety.os.fstat
+    uid = os.geteuid()
+
+    def foreign_directory(fd):
+        st = original(fd)
+        if stat.S_ISDIR(st.st_mode):
+            return SimpleNamespace(st_mode=st.st_mode, st_uid=uid + 1)
+        return st
+
+    monkeypatch.setattr(backup_safety.os, "fstat", foreign_directory)
+    with pytest.raises(UnsafeBackupError):
+        read_private_backup(p)
+
+
+@pytest.mark.parametrize("limit", [-1, True, "100"])
+def test_invalid_backup_limit_rejected(tmp_path, limit):
+    p = tmp_path / "backup.bin"
+    p.write_bytes(b"data")
+    with pytest.raises(UnsafeBackupError):
+        read_private_backup(p, max_bytes=limit)
