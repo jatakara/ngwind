@@ -106,3 +106,35 @@ def test_invalid_backup_limit_rejected(tmp_path, limit):
     p.write_bytes(b"data")
     with pytest.raises(UnsafeBackupError):
         read_private_backup(p, max_bytes=limit)
+
+
+
+def test_backup_modified_during_read_rejected(tmp_path, monkeypatch):
+    """Deterministically simulate a metadata change between the two fstat calls."""
+    import stat
+    import backup_safety
+    p = tmp_path / "backup.bin"
+    p.write_bytes(b"trusted")
+    original = backup_safety.os.fstat
+    regular_calls = 0
+
+    def modified_between_checks(fd):
+        nonlocal regular_calls
+        st = original(fd)
+        if stat.S_ISREG(st.st_mode):
+            regular_calls += 1
+            if regular_calls == 2:
+                os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+                return original(fd)
+        return st
+
+    monkeypatch.setattr(backup_safety.os, "fstat", modified_between_checks)
+    with pytest.raises(UnsafeBackupError):
+        read_private_backup(p)
+    assert regular_calls == 2
+
+
+def test_unchanged_backup_remains_readable(tmp_path):
+    p = tmp_path / "backup.bin"
+    p.write_bytes(b"trusted")
+    assert read_private_backup(p) == b"trusted"
