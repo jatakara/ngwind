@@ -15,13 +15,13 @@ _SECRET_KEY = re.compile(
     re.IGNORECASE,
 )
 _ASSIGNMENT = re.compile(
-    r"(?i)(?P<key>\\b(?:password|passwd|pwd|secret|token|api[_-]?key|"
-    r"masterauth|requirepass|authorization)\\b\\s*[:=]\\s*)"
-    r"(?P<value>\\\"[^\\\"\\r\\n]*\\\"|'[^'\\r\\n]*'|[^\\s,;#]+)"
+    r"(?i)(?P<key>\b(?:password|passwd|pwd|secret|token|api[_-]?key|"
+    r"masterauth|requirepass|authorization)\b\s*[:=]\s*)"
+    r"(?P<value>\\"[^\\"\r\n]*\\"|'[^'\r\n]*'|[^\s,;#]+)"
 )
-_JDBC = re.compile(r"(?i)(jdbc:[^\\s]*?)(?P<credentials>password=[^&\\s;]+)")
-_URL_AUTH = re.compile(r"(?P<prefix>\\b[a-z][a-z0-9+.-]*://[^\\s/@:]+:)[^\\s/@]+@", re.I)
-_BEARER = re.compile(r"(?i)\\bBearer\\s+[^\\s,;]+")
+_JDBC = re.compile(r"(?i)(jdbc:[^\s]*?)(?P<credentials>password=[^&\s;]+)")
+_URL_AUTH = re.compile(r"(?P<prefix>\b[a-z][a-z0-9+.-]*://[^\s/@:]+:)[^\s/@]+@", re.I)
+_BEARER = re.compile(r"(?i)\bBearer\s+[^\s,;]+")
 _PEM = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
     re.DOTALL,
