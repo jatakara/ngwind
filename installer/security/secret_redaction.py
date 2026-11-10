@@ -34,7 +34,7 @@ def redact_text(value: str) -> str:
     """Mask known credential patterns before writing logs or reports."""
     if not isinstance(value, str):
         raise TypeError("redact_text expects str")
-    value = _PEM.sub(REDACTED, value)
+    value = re.sub(r"(?im)(\\bAuthorization\\s*:\\s*)(?:Bearer\\s+)?[^\\r\\n]+",\n                   lambda m: m[1] + REDACTED, value)\n    value = _PEM.sub(REDACTED, value)
     value = _URL_AUTH.sub(lambda m: m["prefix"] + REDACTED + "@", value)
     value = _JDBC.sub(lambda m: m[1] + "password=" + REDACTED, value)
     value = _ASSIGNMENT.sub(lambda m: m["key"] + REDACTED, value)
