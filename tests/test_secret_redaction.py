@@ -25,7 +25,7 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("secret", redact_text("https://user:secret@example.org/path"))
 
     def test_pem_private_key(self):
-        key = "-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----"
+        key = "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----"
         self.assertEqual(redact_text(key), REDACTED)
 
     def test_unknown_type_fails_closed(self):
