@@ -21,7 +21,8 @@ def read_private_backup(path, max_bytes=1024 * 1024):
     parent = os.fspath(path.parent)
     owner = os.geteuid()
     try:
-        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |\n                        getattr(os, "O_CLOEXEC", 0))
+        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+                        getattr(os, "O_CLOEXEC", 0))
         try:
             ds = os.fstat(directory)
             if (not stat.S_ISDIR(ds.st_mode) or ds.st_mode & 0o022
@@ -39,7 +40,16 @@ def read_private_backup(path, max_bytes=1024 * 1024):
                     content = stream.read(max_bytes + 1)
                 if len(content) > max_bytes:
                     raise UnsafeBackupError("Oversized backup")
-                # Detect in-place writes during the read. This is best-effort:\n                # ownership/permissions and a trusted checksum remain essential.\n                after = os.fstat(fd)\n                if (after.st_dev != st.st_dev or after.st_ino != st.st_ino\n                        or after.st_size != st.st_size\n                        or after.st_mtime_ns != st.st_mtime_ns\n                        or after.st_ctime_ns != st.st_ctime_ns):\n                    raise UnsafeBackupError("Backup changed while reading")\n                return content\n            finally:
+                # Detect in-place writes during the read. This is best-effort:
+                # ownership/permissions and a trusted checksum remain essential.
+                after = os.fstat(fd)
+                if (after.st_dev != st.st_dev or after.st_ino != st.st_ino
+                        or after.st_size != st.st_size
+                        or after.st_mtime_ns != st.st_mtime_ns
+                        or after.st_ctime_ns != st.st_ctime_ns):
+                    raise UnsafeBackupError("Backup changed while reading")
+                return content
+            finally:
                 os.close(fd)
         finally:
             os.close(directory)
