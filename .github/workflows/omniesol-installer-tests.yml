@@ -1,0 +1,26 @@
+name: OmniEsol installer Python checks
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/omniesol-installer-tests.yml'
+  workflow_dispatch:
+jobs:
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Locate installer test suites
+        shell: pwsh
+        run: |
+          $tests = @(Get-ChildItem -Path installer -Recurse -Filter 'test_*.py' -File -ErrorAction SilentlyContinue)
+          if ($tests.Count -eq 0) { throw 'No installer tests found; refusing false green build' }
+          Write-Host "Found $($tests.Count) test files"
+      - name: Run Python unittest discovery
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path .).Path
+          python -m unittest discover -s installer -p 'test_*.py' -v
