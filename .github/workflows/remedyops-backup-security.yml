@@ -1,0 +1,38 @@
+name: RemedyOps rollback backup security
+
+on:
+  pull_request:
+    paths:
+      - 'remedyops-ai/backup_safety.py'
+      - 'remedyops-ai/tests/test_backup_safety.py'
+      - '.github/workflows/remedyops-backup-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup-security:
+    name: Backup security regression (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    defaults:
+      run:
+        working-directory: remedyops-ai
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install isolated test dependency
+        run: python -m pip install 'pytest>=8,<9'
+      - name: Check rollback module syntax
+        run: python -m py_compile backup_safety.py tests/test_backup_safety.py
+      - name: Run rollback security regression tests
+        run: python -m pytest -q tests/test_backup_safety.py
