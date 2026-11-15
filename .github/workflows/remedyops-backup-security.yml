@@ -32,8 +32,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install isolated test dependency
-        run: python -m pip install 'pytest==8.3.5'
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install 'pytest==8.3.5'
       - name: Check rollback module syntax
         run: python -m compileall -q app.py backup_safety.py tests
-      - name: Run rollback security regression tests
-        run: python -m pytest -q tests/test_backup_safety.py
+      - name: Run complete RemedyOps test suite
+        run: python -m pytest -q tests
