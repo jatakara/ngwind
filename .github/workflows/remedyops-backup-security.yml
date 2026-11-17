@@ -37,6 +37,6 @@ jobs:
       - name: Check installed dependency consistency
         run: python -m pip check
       - name: Check rollback module syntax
-        run: python -m compileall -q app.py backup_safety.py tests
+        run: python -m compileall -q .
       - name: Run complete RemedyOps test suite
         run: python -m pytest -q tests
