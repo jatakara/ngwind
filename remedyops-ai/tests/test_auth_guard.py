@@ -33,3 +33,11 @@ def test_non_api_ui_is_accessible_without_token():
 
 def test_similarly_named_non_api_path_is_not_guarded():
     assert api_auth_failure("/apiary", "", "") is None
+
+
+def test_non_ascii_header_is_rejected():
+    assert api_auth_failure("/api/apply", "expected", "caf\u00e9") == (401, "Unauthorized")
+
+
+def test_non_ascii_configuration_fails_closed():
+    assert api_auth_failure("/api/apply", "caf\u00e9", "caf\u00e9") == (503, "API token configuration invalid")

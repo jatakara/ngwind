@@ -17,6 +17,12 @@ def api_auth_failure(path: str, expected_token: str, supplied_token: str) -> tup
         return None
     if not expected_token:
         return (503, "API token not configured")
+    # compare_digest on str raises TypeError for non-ASCII input.
+    # Reject malformed header tokens and fail closed on invalid configuration.
+    if not expected_token.isascii():
+        return (503, "API token configuration invalid")
+    if not supplied_token.isascii():
+        return (401, "Unauthorized")
     if not hmac.compare_digest(supplied_token, expected_token):
         return (401, "Unauthorized")
     return None
