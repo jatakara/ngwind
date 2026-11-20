@@ -49,3 +49,18 @@ def restore_backup_after_verification_failure(
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+
+
+def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
+    """Verify rollback bytes after replacement; fail closed on read errors.
+
+    A matching digest proves only the observed file bytes, not application
+    health or durability of unrelated state.
+    """
+    try:
+        if target.is_symlink() or not target.is_file():
+            return False
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        return hmac.compare_digest(actual, expected_sha256)
+    except (OSError, ValueError):
+        return False
