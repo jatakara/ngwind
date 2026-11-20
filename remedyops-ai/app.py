@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from pathlib import Path
 from datetime import datetime, timezone
 from process_lock import InterProcessLock, RemediationLockBusy, RemediationLockError
-from remediation_safety import restore_backup_after_verification_failure
+from remediation_safety import restore_backup_after_verification_failure, verify_restored_bytes
 from atomic_config import AtomicConfigError, atomic_replace_config
 from backup_safety import read_private_backup
 from recovery_journal import (
@@ -300,6 +300,10 @@ def rollback(req:RollbackIn):
                 # A failure can occur AFTER rename; do not claim rollback
                 # succeeded or clear the prepared journal.
                 raise HTTPException(503,"Atomic rollback uncertain; manual recovery required") from exc
+            # Verify the on-disk bytes independently before recording success.
+            # On mismatch/read failure, keep the durable intent unresolved.
+            if not verify_restored_bytes(p, rec["before_hash"]):
+                raise HTTPException(503, "Rollback verification failed; manual recovery required")
             rec["status"]="rolled_back"
             try:
                 save("change",cid,rec)
