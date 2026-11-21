@@ -72,7 +72,7 @@ def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
         return hmac.compare_digest(digest.hexdigest(), expected_sha256)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return False
     finally:
         if fd is not None:
