@@ -29,3 +29,20 @@ def test_symlink_target_fails_closed(tmp_path):
     link = tmp_path / "link"
     link.symlink_to(actual)
     assert not verify_restored_bytes(link, hashlib.sha256(b"safe").hexdigest())
+
+
+def test_hardlinked_target_fails_closed(tmp_path):
+    target = tmp_path / "config"
+    target.write_bytes(b"safe")
+    (tmp_path / "alias").hardlink_to(target)
+    assert not verify_restored_bytes(target, hashlib.sha256(b"safe").hexdigest())
+
+
+def test_directory_target_fails_closed(tmp_path):
+    assert not verify_restored_bytes(tmp_path, hashlib.sha256(b"").hexdigest())
+
+
+def test_non_ascii_expected_digest_fails_closed(tmp_path):
+    target = tmp_path / "config"
+    target.write_bytes(b"safe")
+    assert not verify_restored_bytes(target, "\u00e9" * 64)

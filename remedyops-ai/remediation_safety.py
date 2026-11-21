@@ -57,10 +57,23 @@ def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
     A matching digest proves only the observed file bytes, not application
     health or durability of unrelated state.
     """
-    try:
-        if target.is_symlink() or not target.is_file():
-            return False
-        actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        return hmac.compare_digest(actual, expected_sha256)
-    except (OSError, ValueError):
+    # Validate the opened inode, not a path inspected before opening it.
+    # O_NOFOLLOW prevents final-component symlink swaps between checks.
+    if not hasattr(os, "O_NOFOLLOW"):
         return False
+    fd = None
+    try:
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            return False
+        digest = hashlib.sha256()
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return hmac.compare_digest(digest.hexdigest(), expected_sha256)
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
