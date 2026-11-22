@@ -67,10 +67,15 @@ def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
         metadata = os.fstat(fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             return False
+        before = (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
         digest = hashlib.sha256()
         with os.fdopen(fd, "rb", closefd=False) as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
+        after_metadata = os.fstat(fd)
+        after = (after_metadata.st_dev, after_metadata.st_ino, after_metadata.st_size, after_metadata.st_mtime_ns, after_metadata.st_ctime_ns)
+        if before != after:
+            return False
         return hmac.compare_digest(digest.hexdigest(), expected_sha256)
     except (OSError, ValueError, TypeError):
         return False
