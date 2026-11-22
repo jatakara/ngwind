@@ -46,3 +46,32 @@ def test_non_ascii_expected_digest_fails_closed(tmp_path):
     target = tmp_path / "config"
     target.write_bytes(b"safe")
     assert not verify_restored_bytes(target, "\u00e9" * 64)
+
+
+def test_in_place_mutation_during_verification_fails_closed(tmp_path, monkeypatch):
+    """Metadata change during descriptor read must not report success."""
+    import os
+    from types import SimpleNamespace
+    import remediation_safety
+
+    target = tmp_path / "config"
+    target.write_bytes(b"safe")
+    expected = hashlib.sha256(b"safe").hexdigest()
+    real_fstat = os.fstat
+    calls = 0
+
+    def changing_fstat(fd):
+        nonlocal calls
+        calls += 1
+        current = real_fstat(fd)
+        if calls == 2:
+            values = {name: getattr(current, name) for name in (
+                "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"
+            )}
+            values["st_mtime_ns"] += 1
+            return SimpleNamespace(**values)
+        return current
+
+    monkeypatch.setattr(remediation_safety.os, "fstat", changing_fstat)
+    assert not verify_restored_bytes(target, expected)
+    assert calls == 2
