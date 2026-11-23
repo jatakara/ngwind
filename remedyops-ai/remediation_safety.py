@@ -76,6 +76,13 @@ def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
         after = (after_metadata.st_dev, after_metadata.st_ino, after_metadata.st_size, after_metadata.st_mtime_ns, after_metadata.st_ctime_ns)
         if before != after:
             return False
+        # The opened inode may no longer be the file at the requested path.
+        # Reject a path replaced during hashing (best-effort; not a lock).
+        path_metadata = os.stat(target, follow_symlinks=False)
+        if not stat.S_ISREG(path_metadata.st_mode) or (
+            path_metadata.st_dev, path_metadata.st_ino
+        ) != (after_metadata.st_dev, after_metadata.st_ino):
+            return False
         return hmac.compare_digest(digest.hexdigest(), expected_sha256)
     except (OSError, ValueError, TypeError):
         return False
