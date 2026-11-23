@@ -75,3 +75,54 @@ def test_in_place_mutation_during_verification_fails_closed(tmp_path, monkeypatc
     monkeypatch.setattr(remediation_safety.os, "fstat", changing_fstat)
     assert not verify_restored_bytes(target, expected)
     assert calls == 2
+
+
+def test_target_path_replaced_during_hashing_fails_closed(tmp_path, monkeypatch):
+    """Hashing the original inode must not validate a replacement pathname."""
+    import os
+    import remediation_safety
+
+    target = tmp_path / "config"
+    target.write_bytes(b"safe")
+    expected = hashlib.sha256(b"safe").hexdigest()
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"safe")
+    real_fstat = os.fstat
+    calls = 0
+
+    def swap_after_read(fd):
+        nonlocal calls
+        calls += 1
+        result = real_fstat(fd)
+        if calls == 2:
+            os.replace(replacement, target)
+        return result
+
+    monkeypatch.setattr(remediation_safety.os, "fstat", swap_after_read)
+    assert not verify_restored_bytes(target, expected)
+    assert calls == 2
+
+
+def test_target_path_changed_to_symlink_during_hashing_fails_closed(tmp_path, monkeypatch):
+    """A post-open symlink swap cannot be accepted as a verified restore."""
+    import os
+    import remediation_safety
+
+    target = tmp_path / "config"
+    target.write_bytes(b"safe")
+    expected = hashlib.sha256(b"safe").hexdigest()
+    real_fstat = os.fstat
+    calls = 0
+
+    def swap_to_symlink(fd):
+        nonlocal calls
+        calls += 1
+        result = real_fstat(fd)
+        if calls == 2:
+            target.unlink()
+            target.symlink_to(tmp_path / "elsewhere")
+        return result
+
+    monkeypatch.setattr(remediation_safety.os, "fstat", swap_to_symlink)
+    assert not verify_restored_bytes(target, expected)
+    assert calls == 2
