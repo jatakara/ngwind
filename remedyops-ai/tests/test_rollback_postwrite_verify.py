@@ -126,3 +126,27 @@ def test_target_path_changed_to_symlink_during_hashing_fails_closed(tmp_path, mo
     monkeypatch.setattr(remediation_safety.os, "fstat", swap_to_symlink)
     assert not verify_restored_bytes(target, expected)
     assert calls == 2
+
+
+def test_fifo_without_writer_fails_closed_without_blocking(tmp_path):
+    """Use a bounded subprocess so a regression cannot hang the test suite."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    import pytest
+    import remediation_safety
+
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO requires POSIX")
+    target = tmp_path / "fifo"
+    os.mkfifo(target)
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "from pathlib import Path; from remediation_safety import verify_restored_bytes; "
+         "import sys; sys.exit(1 if verify_restored_bytes(Path(sys.argv[1]), '0'*64) else 0)",
+         str(target)],
+        cwd=Path(remediation_safety.__file__).resolve().parent,
+        timeout=5, check=False,
+    )
+    assert result.returncode == 0
