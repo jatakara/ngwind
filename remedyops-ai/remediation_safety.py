@@ -59,11 +59,15 @@ def verify_restored_bytes(target: Path, expected_sha256: str) -> bool:
     """
     # Validate the opened inode, not a path inspected before opening it.
     # O_NOFOLLOW prevents final-component symlink swaps between checks.
-    if not hasattr(os, "O_NOFOLLOW"):
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
         return False
     fd = None
     try:
-        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        # A FIFO can block in open() before fstat() rejects its type.
+        fd = os.open(
+            target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            | getattr(os, "O_CLOEXEC", 0)
+        )
         metadata = os.fstat(fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             return False
