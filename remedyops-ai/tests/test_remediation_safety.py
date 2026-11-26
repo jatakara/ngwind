@@ -57,3 +57,19 @@ def test_failed_atomic_replace_reports_failure_and_cleans_temp(tmp_path, monkeyp
     assert result == "rollback_failed"
     assert target.read_bytes() == b"changed=yes\n"
     assert list(tmp_path.glob(".remedyops-restore-*")) == []
+
+
+def test_automatic_restore_rejects_failed_postwrite_verification(tmp_path, monkeypatch):
+    target, backup = make_files(tmp_path)
+    expected = digest(backup.read_bytes())
+    observed = []
+
+    def reject(path, expected_hash):
+        observed.append((path, expected_hash, path.read_bytes()))
+        return False
+
+    monkeypatch.setattr(safety, "verify_restored_bytes", reject)
+    result = safety.restore_backup_after_verification_failure(target, backup, expected)
+    assert result == "rollback_failed"
+    assert observed == [(target, expected, b"changed=no\n")]
+    assert list(tmp_path.glob(".remedyops-restore-*")) == []
