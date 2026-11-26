@@ -40,8 +40,7 @@ def restore_backup_after_verification_failure(
             os.fsync(stream.fileno())
         os.replace(temp_path, target)
         temp_path = None
-        restored = hashlib.sha256(target.read_bytes()).hexdigest()
-        if not hmac.compare_digest(restored, expected_before_hash):
+        if not verify_restored_bytes(target, expected_before_hash):
             return "rollback_failed"
         return "verification_failed_rolled_back"
     except (OSError, ValueError):
