@@ -73,3 +73,35 @@ def test_automatic_restore_rejects_failed_postwrite_verification(tmp_path, monke
     assert result == "rollback_failed"
     assert observed == [(target, expected, b"changed=no\n")]
     assert list(tmp_path.glob(".remedyops-restore-*")) == []
+
+
+def test_backup_hardlink_rejected(tmp_path):
+    target, backup = make_files(tmp_path)
+    import os
+    os.link(backup, tmp_path / "alias.bin")
+    assert safety.restore_backup_after_verification_failure(
+        target, backup, digest(b"changed=no\n")
+    ) == "rollback_failed"
+    assert target.read_bytes() == b"changed=yes\n"
+    assert not list(tmp_path.glob(".remedyops-restore-*"))
+
+
+def test_backup_fifo_rejected_without_blocking(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    target, backup = make_files(tmp_path)
+    backup.unlink()
+    os.mkfifo(backup)
+    code = (
+        "from pathlib import Path; import sys; "
+        "from remediation_safety import restore_backup_after_verification_failure as restore; "
+        "assert restore(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]) == 'rollback_failed'"
+    )
+    subprocess.run(
+        [sys.executable, "-c", code, str(target), str(backup), digest(b"changed=no\n")],
+        cwd=Path(safety.__file__).parent, timeout=5, check=True,
+    )
+    assert target.read_bytes() == b"changed=yes\n"
+    assert not list(tmp_path.glob(".remedyops-restore-*"))
