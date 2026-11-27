@@ -25,9 +25,9 @@ def restore_backup_after_verification_failure(
     try:
         if target.is_symlink() or backup.is_symlink() or not target.is_file():
             return "rollback_failed"
-        original = backup.read_bytes()
-        digest = hashlib.sha256(original).hexdigest()
-        if not hmac.compare_digest(digest, expected_before_hash):
+        if not isinstance(expected_before_hash, str) or not expected_before_hash.isascii():
+            return "rollback_failed"
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
             return "rollback_failed"
 
         original_mode = stat.S_IMODE(target.stat().st_mode)
@@ -35,7 +35,25 @@ def restore_backup_after_verification_failure(
         temp_path = Path(name)
         with os.fdopen(fd, "wb") as stream:
             os.fchmod(stream.fileno(), original_mode)
-            stream.write(original)
+            digest = hashlib.sha256()
+            backup_fd = os.open(
+                backup, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                | getattr(os, "O_CLOEXEC", 0)
+            )
+            with os.fdopen(backup_fd, "rb") as source:
+                metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    return "rollback_failed"
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    stream.write(chunk)
+                after = os.fstat(source.fileno())
+                if (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns) != (
+                    after.st_size, after.st_mtime_ns, after.st_ctime_ns
+                ):
+                    return "rollback_failed"
+            if not hmac.compare_digest(digest.hexdigest(), expected_before_hash):
+                return "rollback_failed"
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, target)
