@@ -105,3 +105,25 @@ def test_backup_fifo_rejected_without_blocking(tmp_path):
     )
     assert target.read_bytes() == b"changed=yes\n"
     assert not list(tmp_path.glob(".remedyops-restore-*"))
+
+
+def test_unverified_restore_temp_stays_private(tmp_path, monkeypatch):
+    target, backup = make_files(tmp_path)
+    target.chmod(0o644)
+    real_open = safety.os.open
+    observed = []
+
+    def inspect_open(path, *args, **kwargs):
+        if path == backup:
+            temps = list(tmp_path.glob(".remedyops-restore-*"))
+            assert len(temps) == 1
+            observed.append(temps[0].stat().st_mode & 0o777)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(safety.os, "open", inspect_open)
+    assert safety.restore_backup_after_verification_failure(
+        target, backup, digest(b"wrong")
+    ) == "rollback_failed"
+    assert observed == [0o600]
+    assert target.read_bytes() == b"changed=yes\n"
+    assert not list(tmp_path.glob(".remedyops-restore-*"))
