@@ -34,7 +34,6 @@ def restore_backup_after_verification_failure(
         fd, name = tempfile.mkstemp(prefix=".remedyops-restore-", dir=target.parent)
         temp_path = Path(name)
         with os.fdopen(fd, "wb") as stream:
-            os.fchmod(stream.fileno(), original_mode)
             digest = hashlib.sha256()
             backup_fd = os.open(
                 backup, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
@@ -55,6 +54,8 @@ def restore_backup_after_verification_failure(
             if not hmac.compare_digest(digest.hexdigest(), expected_before_hash):
                 return "rollback_failed"
             stream.flush()
+            # Keep unverified backup bytes private until validation succeeds.
+            os.fchmod(stream.fileno(), original_mode)
             os.fsync(stream.fileno())
         os.replace(temp_path, target)
         temp_path = None
